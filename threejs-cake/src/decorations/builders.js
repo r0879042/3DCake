@@ -17,7 +17,6 @@ export async function buildCandle(cakeTopY, THREERef) {
     if ('metalness' in m) m.metalness = 0.0;
   });
   fitToHeight(g, Math.max(0.6, (cakeTopY || 1) * 0.6));
-  // small flame
   const THREE = THREERef;
   const box = new THREE.Box3().setFromObject(g);
   const top = box.max.y;

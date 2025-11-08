@@ -43,7 +43,7 @@ export function createAddRemoveUI({ decorations, toggleDecoration, updateButtonT
     return { updateButton };
   }
   
-  export function createEditPanel({ decorations, tcontrols, dropToCake, controls, mountId = 'app' }) {
+  export function createEditPanel({ decorations, tcontrols, dropToCake, mountId = 'app' }) {
     const panel = document.createElement('div');
     panel.style.position = 'absolute';
     panel.style.top = '12px';
@@ -74,40 +74,51 @@ export function createAddRemoveUI({ decorations, toggleDecoration, updateButtonT
     const editSelect = panel.querySelector('#editSelect');
     const scaleRange = panel.querySelector('#scaleRange');
     const moveToggle = panel.querySelector('#moveToggle');
+  
     let selectedKey = '';
   
-    editSelect.onchange = () => {
-      selectedKey = editSelect.value;
+    function attachIfPossible() {
       const item = decorations[selectedKey];
       if (item && item.mesh) {
         tcontrols.attach(item.mesh);
         moveToggle.textContent = 'Disable Move';
-        scaleRange.value = '1';
-      } else {
-        tcontrols.detach();
-        moveToggle.textContent = 'Enable Move';
+        return true;
       }
+      tcontrols.detach();
+      moveToggle.textContent = 'Enable Move';
+      return false;
+    }
+  
+    editSelect.onchange = () => {
+      selectedKey = editSelect.value;
+      scaleRange.value = '1';
+      attachIfPossible();
     };
   
     scaleRange.oninput = () => {
       const item = decorations[selectedKey];
       if (item && item.mesh) {
         const s = parseFloat(scaleRange.value);
-        item.mesh.scale.setScalar(s * item.mesh.scale.x);
-        dropToCake(item.mesh);
+        item.mesh.scale.setScalar(s * item.mesh.scale.x); // increase scale
+        dropToCake(item.mesh); 
         scaleRange.value = '1';
       }
     };
   
     moveToggle.onclick = () => {
-      const item = decorations[selectedKey];
-      if (!item || !item.mesh) return;
+      if (!selectedKey) {
+        const firstKey = Object.keys(decorations).find(k => decorations[k].mesh);
+        if (firstKey) {
+          selectedKey = firstKey;
+          editSelect.value = firstKey;
+        }
+      }
+      // Toggle attach/detach
       if (tcontrols.object) {
         tcontrols.detach();
         moveToggle.textContent = 'Enable Move';
       } else {
-        tcontrols.attach(item.mesh);
-        moveToggle.textContent = 'Disable Move';
+        attachIfPossible();
       }
     };
   }

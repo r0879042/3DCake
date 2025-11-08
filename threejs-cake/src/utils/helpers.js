@@ -1,31 +1,43 @@
 import { THREE } from '../core/setup.js';
 
-const _tmpV = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
+const _tmpV = new THREE.Vector3();
 
+/**
+ * Function to ensure a model’s height matches a given target height.
+ */
 export function fitToHeight(obj3d, targetH) {
   const box = new THREE.Box3().setFromObject(obj3d);
-  const h = box.getSize(_tmpV).y || 1;
-  const s = targetH / h;
-  obj3d.scale.multiplyScalar(s);
+  const size = box.getSize(_tmpV);
+  const h = size.y || 1;
+  const scale = targetH / h;
+  obj3d.scale.multiplyScalar(scale);
 }
 
-export function getLocalBaseOffset(obj3d) {
+/**
+ * Returns how far we must lift from the hit point so the object’s base sits on it.
+ */
+function baseLift(obj3d) {
   const box = new THREE.Box3().setFromObject(obj3d);
-  const h = box.getSize(_tmpV).y;
-  const centerY = box.getCenter(_tmpV).y;
-  const minY = centerY - h / 2;
-  return -minY;
+  const minY = box.min.y;
+  const originY = obj3d.position.y;
+  return originY - minY;
 }
 
-// returns a function bound to the current cake refs
+/**
+ * Creates a function that drops an object onto the cake surface.
+ */
 export function makeDropToCake(cakeRootRef, cakeTopYRef) {
   return function dropToCake(obj3d) {
     if (!cakeRootRef.value) return;
+
     const from = new THREE.Vector3(obj3d.position.x, cakeTopYRef.value + 5, obj3d.position.z);
     _ray.set(from, new THREE.Vector3(0, -1, 0));
+
     const hits = _ray.intersectObject(cakeRootRef.value, true);
-    const baseOffset = getLocalBaseOffset(obj3d);
-    obj3d.position.y = (hits[0]?.point.y ?? cakeTopYRef.value) + baseOffset;
+    const lift = baseLift(obj3d);
+    const targetY = hits.length ? hits[0].point.y : cakeTopYRef.value;
+
+    obj3d.position.y = targetY + lift;
   };
 }
