@@ -1,58 +1,120 @@
-import { THREE, scene, camera, renderer, mount, startLoop, controls, tcontrols } from './core/setup.js';
-import { makeDropToCake } from './utils/helpers.js';
-import { setCakeMetrics, createSlots, findFreeSlot, occupySlot, freeSlotByKey, occupiedCount } from './placement/slots.js';
-import { buildStrawberry, buildCandle, buildChocolate } from './decorations/builders.js';
-import { createAddRemoveUI, createEditPanel } from './ui/panels.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-mount('app');
+import { buildStrawberry, buildOrchid, buildChocolate } from './decorations/builders.js';
+import { createAddRemoveUI, createEditPanel } from './ui/panels.js';
+import { createSlots, findFreeSlot, occupySlot, freeSlotByKey, occupiedCount } from './placement/slots.js';
 
+// === Scene & Renderer ===
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(3, 2, 4);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.getElementById('app').appendChild(renderer.domElement);
+
+// === Lights ===
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+dirLight.position.set(5, 8, 5);
+dirLight.castShadow = true;
+scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+fillLight.position.set(-4, 3, -3);
+scene.add(fillLight);
+
+// === Ground ===
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.MeshStandardMaterial({ color: 0x1f2228, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// === Controls ===
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+const tcontrols = new TransformControls(camera, renderer.domElement);
+tcontrols.setMode('translate');
+tcontrols.showY = false;
+scene.add(tcontrols);
+tcontrols.addEventListener('mouseDown', () => (controls.enabled = false));
+tcontrols.addEventListener('mouseUp', () => (controls.enabled = true));
+
+// === Load Cake ===
 const loader = new GLTFLoader();
-const cakeRef = { value: null };
-const cakeTopYRef = { value: 0 };
-const dropToCake = makeDropToCake(cakeRef, cakeTopYRef);
+let cakeRoot = null;
+let cakeTopY = 0;
+let cakeRadius = 0.8;
+let slots = [];
 
-// === LOAD CAKE ===
 loader.load(
   '/models/birthday_cake.glb',
   (gltf) => {
-    const cake = gltf.scene;
-    cake.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+    cakeRoot = gltf.scene;
+    cakeRoot.traverse((o) => {
+      if (o.isMesh) o.castShadow = o.receiveShadow = true;
+    });
 
-    // center 
-    const bbox = new THREE.Box3().setFromObject(cake);
+    const bbox = new THREE.Box3().setFromObject(cakeRoot);
     const size = bbox.getSize(new THREE.Vector3());
     const center = bbox.getCenter(new THREE.Vector3());
-    cake.position.set(-center.x, -bbox.min.y, -center.z);
-    const targetSize = 2.0;
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 0) cake.scale.setScalar(targetSize / maxDim);
-    scene.add(cake);
+    cakeRoot.position.set(-center.x, -bbox.min.y, -center.z);
 
-    // metrics
-    const b2 = new THREE.Box3().setFromObject(cake);
-    const s2 = b2.getSize(new THREE.Vector3());
-    const topY = b2.max.y;
-    const radius = Math.max(s2.x, s2.z) * 0.5 * 0.9;
+    const scale = 2.0 / Math.max(size.x, size.y, size.z);
+    cakeRoot.scale.setScalar(scale);
+    scene.add(cakeRoot);
 
-    cakeRef.value = cake;
-    cakeTopYRef.value = topY;
-    setCakeMetrics(topY, radius);
+    const bbox2 = new THREE.Box3().setFromObject(cakeRoot);
+    cakeTopY = bbox2.max.y;
+    cakeRadius = Math.max(bbox2.getSize(new THREE.Vector3()).x, bbox2.getSize(new THREE.Vector3()).z) * 0.5 * 0.9;
+
+    controls.target.set(0, bbox2.getCenter(new THREE.Vector3()).y, 0);
+    controls.update();
     createSlots(6);
   },
   undefined,
-  (e) => console.error('❌ Failed to load cake', e)
+  (err) => console.error('❌ Failed to load cake:', err)
 );
 
-// === DECORATION REGISTRY ===
+// === Drop to Cake Helper ===
+const _ray = new THREE.Raycaster();
+const _tmp = new THREE.Vector3();
+function dropToCake(obj3d) {
+  if (!cakeRoot) return;
+  const from = new THREE.Vector3(obj3d.position.x, cakeTopY + 5, obj3d.position.z);
+  _ray.set(from, new THREE.Vector3(0, -1, 0));
+  const hits = _ray.intersectObject(cakeRoot, true);
+  const box = new THREE.Box3().setFromObject(obj3d);
+  const h = box.getSize(_tmp).y;
+  const centerY = box.getCenter(_tmp).y;
+  const baseOffset = -(centerY - h / 2);
+  obj3d.position.y = (hits[0]?.point.y ?? cakeTopY) + baseOffset;
+}
+
+// === Decorations ===
 const decorations = {
-  strawberry: { mesh: null, build: () => buildStrawberry(cakeTopYRef.value) },
-  candle: { mesh: null, build: () => buildCandle(cakeTopYRef.value) },
-  chocolate: { mesh: null, build: () => buildChocolate(cakeTopYRef.value) },
+  strawberry: { mesh: null, build: (topY) => buildStrawberry(topY) },
+  orchid: { mesh: null, build: (topY) => buildOrchid(topY) },
+  chocolate: { mesh: null, build: (topY) => buildChocolate(topY) },
 };
+
+// === UI ===
+const ui = createAddRemoveUI({ decorations, toggleDecoration });
+createEditPanel({ decorations, tcontrols, dropToCake });
+
 const MAX_ITEMS = 6;
 
-// === TOGGLE DECORATIONS ===
+// === Add / Remove ===
 async function toggleDecoration(key) {
   const item = decorations[key];
   if (!item) return;
@@ -63,43 +125,28 @@ async function toggleDecoration(key) {
     item.mesh = null;
     freeSlotByKey(key);
     ui.updateButton(key);
-    toast(`${cap(key)} removed`);
+    toast(`${capitalize(key)} removed`);
     return;
   }
 
-  if (occupiedCount() >= MAX_ITEMS) {
-    toast(`Limit reached (${MAX_ITEMS}). Remove one first.`);
-    return;
-  }
-
+  if (occupiedCount() >= MAX_ITEMS) return toast('Limit reached. Remove one first.');
   const slot = findFreeSlot();
-  if (!slot) {
-    toast('No free slots.');
-    return;
-  }
+  if (!slot) return toast('No free slots.');
 
   try {
-    const mesh = await item.build();
-    occupySlot(slot, key, mesh, dropToCake);
+    const mesh = await item.build(cakeTopY);
+    occupySlot(slot, key, mesh);
     scene.add(mesh);
     item.mesh = mesh;
     ui.updateButton(key);
-    toast(`${cap(key)} added`);
+    toast(`${capitalize(key)} added`);
   } catch (e) {
-    console.error(`❌ Failed to load ${key}`, e);
+    console.error(e);
     toast(`Error loading ${key}`);
   }
 }
 
-// === UI ===
-const ui = createAddRemoveUI({
-  decorations,
-  toggleDecoration,
-  updateButtonText: () => {}
-});
-createEditPanel({ decorations, tcontrols, dropToCake });
-
-// === TOAST ===
+// === Toast ===
 const toastEl = document.createElement('div');
 toastEl.style.position = 'absolute';
 toastEl.style.left = '50%';
@@ -113,7 +160,6 @@ toastEl.style.fontSize = '12px';
 toastEl.style.opacity = '0';
 toastEl.style.transition = 'opacity 0.2s ease';
 document.getElementById('app').appendChild(toastEl);
-
 let toastTimer = null;
 function toast(msg) {
   toastEl.textContent = msg;
@@ -121,41 +167,21 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (toastEl.style.opacity = '0'), 1200);
 }
-function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
-// === SHIFT-CLICK TO MOVE ITEM ON CAKE ===
-const mouse = new THREE.Vector2();
-const ray = new THREE.Raycaster();
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (!e.shiftKey) return;
-  if (!tcontrols.object || !cakeRef.value) return;
-
-  const rect = renderer.domElement.getBoundingClientRect();
-  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-  ray.setFromCamera(mouse, camera);
-  const hits = ray.intersectObject(cakeRef.value, true);
-  if (hits.length) {
-    const p = hits[0].point;
-    const o = tcontrols.object;
-    o.position.set(p.x, p.y + 2, p.z);
-    dropToCake(o);
-  }
+// === Resize + Loop ===
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// === ARROW KEY MOVE ===
-window.addEventListener('keydown', (e) => {
-  if (!tcontrols.object) return;
-  const o = tcontrols.object;
-  const step = 0.02;
-  if (e.key === 'ArrowLeft') o.position.x -= step;
-  if (e.key === 'ArrowRight') o.position.x += step;
-  if (e.key === 'ArrowUp') o.position.z -= step;
-  if (e.key === 'ArrowDown') o.position.z += step;
-  dropToCake(o);
-});
-
-// === LOOP ===
-startLoop();
+function animate() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
